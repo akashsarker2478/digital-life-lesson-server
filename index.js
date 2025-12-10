@@ -34,6 +34,7 @@ app.get('/lessons',async(req,res)=>{
 
 app.post('/lessons',async(req,res)=>{
     const lesson = req.body;
+     lesson.createdAt = new Date();
     const result = await lessonsCollection.insertOne(lesson)
     res.send(result)
 })
