@@ -29,40 +29,29 @@ const db = client.db('digital_lesson_db')
 const lessonsCollection = db.collection('lessons');
 const usersCollection = db.collection('users');
 
+//user api
 
-//user API
-// app.post('/users',async(req,res)=>{
-//   const user = req.body;
-//   const  query = {email:user.email}
-//   const existingUser = await usersCollection.findOne(query);
-//   if (existingUser) {
-       
-//         return res.send({ message: 'User already exists', insertedId: existingUser._id });
-//     }
-//     const newUser = {
-//       ...user,
-//       isPremium:false,
-//       joinDate: new Date(),
-//     }
-//     const result = await usersCollection.insertOne(newUser);
-//     res.send(result);
-// })
+app.post('/users', async (req, res) => {
+  const user = req.body;
+  const query = { email: user.email };
+  
+  const existingUser = await usersCollection.findOne(query);
+  if (existingUser) {
+    return res.send({ message: 'User already exists', insertedId: existingUser._id });
+  }
+
+  const newUser = {
+    ...user,
+    isPremium: false,   
+    joinDate: new Date(),
+  };
+
+  const result = await usersCollection.insertOne(newUser);
+  res.send(result);
+});
 
 
-// app.get('/user-plan/:email', async (req, res) => {
-//     const email = req.params.email;
-//     const query = { email: email };
 
-//     const user = await usersCollection.findOne(query);
-
-//     if (!user) {
-       
-//         return res.send({ isPremium: false }); 
-//     }
-
-   
-//     res.send({ isPremium: user.isPremium });
-// });
 
 
 //lessons api
