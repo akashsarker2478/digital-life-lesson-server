@@ -1,5 +1,5 @@
 const express = require('express')
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const cors = require('cors')
 const app = express()
 require('dotenv').config()
@@ -29,7 +29,14 @@ const lessonsCollection = db.collection('lessons');
 
 //lessons api
 app.get('/lessons',async(req,res)=>{
-
+const query = {}
+const email = req.query.email;
+if(email){
+    query.createdBy = email;
+}
+const cursor = lessonsCollection.find(query)
+const result = await cursor.toArray()
+res.send(result)
 })
 
 app.post('/lessons',async(req,res)=>{
@@ -37,6 +44,14 @@ app.post('/lessons',async(req,res)=>{
      lesson.createdAt = new Date();
     const result = await lessonsCollection.insertOne(lesson)
     res.send(result)
+})
+
+//delete
+app.delete('/lessons/:id',async(req,res)=>{
+  const id = req.params.id;
+  const query = {_id: new ObjectId(id)}
+  const result = await lessonsCollection.deleteOne(query)
+  res.send(result)
 })
 
     // Send a ping to confirm a successful connection
