@@ -52,6 +52,18 @@ app.post('/users', async (req, res) => {
 
 
 
+//premium update api
+app.patch("/users/premium/:email", async (req, res) => {
+      const email = req.params.email;
+
+      const result = await usersCollection.updateOne(
+        { email: email },
+        { $set: { isPremium: true } }
+      );
+
+      res.send(result);
+    });
+
 
 
 //lessons api
