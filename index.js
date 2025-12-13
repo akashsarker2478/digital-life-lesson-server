@@ -1,18 +1,16 @@
-const express = require('express')
+const express = require('express');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
-const cors = require('cors')
-const app = express()
-require('dotenv').config()
-const stripe = require('stripe')(process.env.STRIPE_SECRET);
-const port =process.env.PORT|| 3000
+const cors = require('cors');
+const app = express();
+require('dotenv').config();
+const port = process.env.PORT || 3000;
 
-//middleware
-app.use(express.json());
-app.use(cors());
+// Global collections
+let usersCollection;
+let lessonsCollection;
 
-const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.yh13yvx.mongodb.net/?appName=Cluster0`;
-
-const client = new MongoClient(uri, {
+// MongoDB connection
+const client = new MongoClient(process.env.MONGO_URI || `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.yh13yvx.mongodb.net/?appName=Cluster0`, {
   serverApi: {
     version: ServerApiVersion.v1,
     strict: true,
@@ -20,133 +18,96 @@ const client = new MongoClient(uri, {
   }
 });
 
+app.use(express.json());
+app.use(cors());
+
 async function run() {
   try {
-    // Connect the client to the server	(optional starting in v4.7)
-    await client.connect();  
+    await client.connect();
+    const db = client.db('digital_lesson_db');
+    usersCollection = db.collection('users');
+    lessonsCollection = db.collection('lessons');
 
-const db = client.db('digital_lesson_db')
-const lessonsCollection = db.collection('lessons');
-const usersCollection = db.collection('users');
+    console.log('MongoDB connected successfully');
 
-//user api
+    // Create or get user
+    app.post('/users', async (req, res) => {
+      const user = req.body;
+      const existingUser = await usersCollection.findOne({ email: user.email });
 
-app.post('/users', async (req, res) => {
-  const user = req.body;
-  const query = { email: user.email };
-  
-  const existingUser = await usersCollection.findOne(query);
-  if (existingUser) {
-    return res.send({ message: 'User already exists', insertedId: existingUser._id });
-  }
+      if (existingUser) {
+        return res.send({ message: 'User already exists', insertedId: existingUser._id });
+      }
 
-  const newUser = {
-    ...user,
-    isPremium: false,   
-    joinDate: new Date(),
-  };
+      const newUser = {
+        ...user,
+        isPremium: false,
+        joinDate: new Date(),
+      };
 
-  const result = await usersCollection.insertOne(newUser);
-  res.send(result);
-});
-
-
-
-//premium update api
-app.patch("/users/premium/:email", async (req, res) => {
-      const email = req.params.email;
-
-      const result = await usersCollection.updateOne(
-        { email: email },
-        { $set: { isPremium: true } }
-      );
-
+      const result = await usersCollection.insertOne(newUser);
       res.send(result);
     });
 
+    // Get user premium status + MongoDB _id
+    app.get('/users/status/:email', async (req, res) => {
+      try {
+        const user = await usersCollection.findOne({ email: req.params.email });
+        if (!user) return res.status(404).send({ message: 'User not found' });
 
+        res.send({
+          isPremium: user.isPremium || false,
+          dbId: user._id.toString(),
+        });
+      } catch (error) {
+        res.status(500).send({ message: 'Server error' });
+      }
+    });
 
-//lessons api
-app.get('/lessons', async (req, res) => {
-  try {
-    const query = {};
-    const email = req.query.email;
+    // Make user Premium 
+    app.patch('/users/make-premium/:id', async (req, res) => {
+      try {
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(req.params.id) },
+          { $set: { isPremium: true, premiumTakenAt: new Date() } }
+        );
+        res.send({ message: 'User upgraded to premium', modifiedCount: result.modifiedCount });
+      } catch (error) {
+        res.status(500).send({ error: 'Failed to upgrade user' });
+      }
+    });
 
-    if (email) {
-      query.createdBy = email;
-    }
+    // Get lessons (all or by user)
+    app.get('/lessons', async (req, res) => {
+      const query = req.query.email ? { createdBy: req.query.email } : {};
+      const lessons = await lessonsCollection.find(query).sort({ createdAt: -1 }).toArray();
+      res.send(lessons);
+    });
 
-    const result = await lessonsCollection.find(query).sort({ createdAt: -1 }).toArray();
+    // Create lesson
+    app.post('/lessons', async (req, res) => {
+      const lesson = { ...req.body, createdAt: new Date() };
+      const result = await lessonsCollection.insertOne(lesson);
+      res.send(result);
+    });
 
-    res.send(result);
+    // Delete lesson
+    app.delete('/lessons/:id', async (req, res) => {
+      const result = await lessonsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+      res.send(result);
+    });
+
+    app.get('/', (req, res) => {
+      res.send('Digital Life Lesson Server is running (Assignment mode, no Stripe)');
+    });
+
   } catch (error) {
-    console.error(error);
-    res.status(500).send({ message: 'Failed to fetch lessons' });
-  }
-});
-
-
-app.post('/lessons',async(req,res)=>{
-    const lesson = req.body;
-     lesson.createdAt = new Date();
-    const result = await lessonsCollection.insertOne(lesson)
-    res.send(result)
-})
-
-//delete
-app.delete('/lessons/:id',async(req,res)=>{
-  const id = req.params.id;
-  const query = {_id: new ObjectId(id)}
-  const result = await lessonsCollection.deleteOne(query)
-  res.send(result)
-})
-
-//payment related apis
-app.post('/create-checkout-session',async(req,res)=>{
-  const {userEmail,userId} = req.body;
-  const AMOUNT_BDT = 1500;
-  const UNIT_AMOUNT = AMOUNT_BDT * 100;
-   const session = await stripe.checkout.sessions.create({
-    line_items: [
-      {
-        // Provide the exact Price ID (for example, price_1234) of the product you want to sell
-        price_data:{
-          currency:'BDT',
-          unit_amount:UNIT_AMOUNT,
-           product_data: {
-              name: "Lifetime Premium Access",
-              description: "Get unlimited premium lessons forever."
-            },
-        },
-        
-        quantity: 1,
-      },
-    ],
-    customer_email:userEmail,
-    mode: 'payment',
-    metadata:{
-      userId:userId
-    },
-    success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
-  });
-console.log(session)
-res.send({url:session.url})
-})
-
-    // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
-    console.log("Pinged your deployment. You successfully connected to MongoDB!");
-  } finally {
-    
+    console.error('Database connection failed:', error);
   }
 }
+
 run().catch(console.dir);
 
-app.get('/', (req, res) => {
-  res.send('digital life lesson server is running...!')
-})
-
 app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`)
-})
+  console.log(`Server running on http://localhost:${port}`);
+});
