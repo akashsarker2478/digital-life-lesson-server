@@ -77,6 +77,22 @@ async function run() {
       }
     });
 
+    //update user
+    app.patch('/users/:id',async(req,res)=>{
+      const id = req.params.id;
+      const updateUser = req.body
+      const query = {_id: new ObjectId(id)}
+      const update = {
+        $set:{
+          name:updateUser.name,
+          photoURL: updateUser.photoURL
+        }
+      }
+      const option = {}
+      const result = await usersCollection.updateOne(query,update,option)
+      res.send(result)
+    })
+
     // Get lessons (all or by user)
     app.get('/lessons', async (req, res) => {
       const query = req.query.email ? { createdBy: req.query.email } : {};
