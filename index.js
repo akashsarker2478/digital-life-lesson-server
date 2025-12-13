@@ -49,7 +49,7 @@ async function run() {
       res.send(result);
     });
 
-    // Get user premium status + MongoDB _id
+    // Get user premium 
     app.get('/users/status/:email', async (req, res) => {
       try {
         const user = await usersCollection.findOne({ email: req.params.email });
