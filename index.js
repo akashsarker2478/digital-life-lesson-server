@@ -5,6 +5,15 @@ const app = express();
 require('dotenv').config();
 const port = process.env.PORT || 3000;
 
+const admin = require("firebase-admin");
+
+const serviceAccount = require("./digital-life-lessons-firebase-adminsdk.json");
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
+
+
 // Global collections
 let usersCollection;
 let lessonsCollection;
@@ -18,8 +27,30 @@ const client = new MongoClient(process.env.MONGO_URI || `mongodb+srv://${process
   }
 });
 
+//middleware
 app.use(express.json());
 app.use(cors());
+
+const verifyFBToken = async(req,res,next)=>{
+// console.log('headers in the middleware',req.headers.authorization)
+const token = req.headers.authorization;
+if(!token){
+  return res.status(401).send({message: 'unauthorized access'})
+}
+
+try{
+  const idToken = token.split(' ')[1];
+  const decoded = await admin.auth().verifyIdToken(idToken)
+  console.log('decoded in the token',decoded);
+  req.decoded_email = decoded.email
+  next()
+}
+catch(err){
+return res.status(401).send({message: 'unauthorized access'})
+}
+
+
+}
 
 async function run() {
   try {
@@ -93,28 +124,55 @@ async function run() {
       res.send(result)
     })
 
-    // Get lessons (all or by user)
-    app.get('/lessons', async (req, res) => {
-      const query = req.query.email ? { createdBy: req.query.email } : {};
-      const lessons = await lessonsCollection.find(query).sort({ createdAt: -1 }).toArray();
-      res.send(lessons);
-    });
+    // Get lessons (all or by user) app.get('/lessons', verifyFBToken, async (req, res) => { const query = req.query.email ? { createdBy: req.query.email } : {}; const lessons = await lessonsCollection.find(query).sort({ createdAt: -1 }).toArray(); res.send(lessons); });
+//public lesson 
+//  app.get('/lessons/public', async (req, res) => {
+//   const lessons = await lessonsCollection
+//     .find({ isPublic: true })
+//     .sort({ createdAt: -1 })
+//     .toArray();
+
+//   res.send(lessons);
+// });
+
+app.get('/lessons/public', async (req, res) => {
+  const lessons = await lessonsCollection.find({}).toArray();
+  res.send(lessons);
+});
+
+
+//my lesson
+app.get('/lessons/my', verifyFBToken, async (req, res) => {
+  const email = req.decoded_email;
+
+  const lessons = await lessonsCollection
+    .find({ createdBy: email })
+    .sort({ createdAt: -1 })
+    .toArray();
+
+  res.send(lessons);
+});
+
+
 
     // Create lesson
-    app.post('/lessons', async (req, res) => {
-      const lesson = { ...req.body, createdAt: new Date() };
+    app.post('/lessons',verifyFBToken, async (req, res) => {
+      const lesson = { 
+        ...req.body,
+        createdBy: req.decoded_email,
+         createdAt: new Date() };
       const result = await lessonsCollection.insertOne(lesson);
       res.send(result);
     });
 
     // Delete lesson
-    app.delete('/lessons/:id', async (req, res) => {
+    app.delete('/lessons/:id',verifyFBToken, async (req, res) => {
       const result = await lessonsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
       res.send(result);
     });
 
     app.get('/', (req, res) => {
-      res.send('Digital Life Lesson Server is running (Assignment mode, no Stripe)');
+      res.send('Digital Life Lesson Server is running ');
     });
 
   } catch (error) {
