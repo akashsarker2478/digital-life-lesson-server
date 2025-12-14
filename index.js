@@ -124,20 +124,48 @@ async function run() {
       res.send(result)
     })
 
-    // Get lessons (all or by user) app.get('/lessons', verifyFBToken, async (req, res) => { const query = req.query.email ? { createdBy: req.query.email } : {}; const lessons = await lessonsCollection.find(query).sort({ createdAt: -1 }).toArray(); res.send(lessons); });
-//public lesson 
-//  app.get('/lessons/public', async (req, res) => {
-//   const lessons = await lessonsCollection
-//     .find({ isPublic: true })
-//     .sort({ createdAt: -1 })
-//     .toArray();
 
-//   res.send(lessons);
-// });
 
 app.get('/lessons/public', async (req, res) => {
   const lessons = await lessonsCollection.find({}).toArray();
   res.send(lessons);
+});
+
+//single lessons
+app.get('/lessons/:id', verifyFBToken, async (req, res) => {
+  const  id  = req.params.id;
+ const query = {_id:new ObjectId(id)}
+ const result = await lessonsCollection.findOne(query)
+ res.send(result)
+});
+
+// Toggle like for a lesson
+app.patch('/lessons/:id/like', verifyFBToken, async (req, res) => {
+  const { id } = req.params;
+  const userEmail = req.decoded_email;
+
+  try {
+    const lesson = await lessonsCollection.findOne({ _id: new ObjectId(id) });
+    if (!lesson) return res.status(404).send({ message: 'Lesson not found' });
+
+    let updatedLikes;
+    if (lesson.likes?.includes(userEmail)) {
+      // Remove like
+      updatedLikes = lesson.likes.filter(email => email !== userEmail);
+    } else {
+      // Add like
+      updatedLikes = [...(lesson.likes || []), userEmail];
+    }
+
+    const result = await lessonsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { likes: updatedLikes, likesCount: updatedLikes.length } }
+    );
+
+    res.send({ message: 'Like updated', likesCount: updatedLikes.length });
+  } catch (err) {
+    res.status(500).send({ message: 'Server error', error: err.message });
+  }
 });
 
 
@@ -152,6 +180,9 @@ app.get('/lessons/my', verifyFBToken, async (req, res) => {
 
   res.send(lessons);
 });
+
+
+
 
 
 
