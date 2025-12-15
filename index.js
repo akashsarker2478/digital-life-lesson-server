@@ -17,6 +17,7 @@ admin.initializeApp({
 // Global collections
 let usersCollection;
 let lessonsCollection;
+let reportsCollection;
 
 // MongoDB connection
 const client = new MongoClient(process.env.MONGO_URI || `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.yh13yvx.mongodb.net/?appName=Cluster0`, {
@@ -42,7 +43,8 @@ try{
   const idToken = token.split(' ')[1];
   const decoded = await admin.auth().verifyIdToken(idToken)
   console.log('decoded in the token',decoded);
-  req.decoded_email = decoded.email
+  req.decoded_email = decoded.email;
+  req.decoded_name = decoded.name;
   next()
 }
 catch(err){
@@ -58,27 +60,67 @@ async function run() {
     const db = client.db('digital_lesson_db');
     usersCollection = db.collection('users');
     lessonsCollection = db.collection('lessons');
+    reportsCollection = db.collection('reports'); 
 
     console.log('MongoDB connected successfully');
 
     // Create or get user
+    // app.post('/users', async (req, res) => {
+    //   const user = req.body;
+    //   const existingUser = await usersCollection.findOne({ email: user.email });
+
+    //   if (existingUser) {
+    //     return res.send({ message: 'User already exists', insertedId: existingUser._id });
+    //   }
+
+    //   const newUser = {
+    //     ...user,
+    //     isPremium: false,
+    //     joinDate: new Date(),
+    //   };
+
+    //   const result = await usersCollection.insertOne(newUser);
+    //   res.send(result);
+    // });
+
     app.post('/users', async (req, res) => {
-      const user = req.body;
-      const existingUser = await usersCollection.findOne({ email: user.email });
+  const user = req.body; 
 
-      if (existingUser) {
-        return res.send({ message: 'User already exists', insertedId: existingUser._id });
+  const query = { email: user.email };
+
+  const userDataToSave = {
+    email: user.email,
+    name: user.name || user.displayName || user.email.split('@')[0],
+    photoURL: user.photoURL || null,  // এটা সবসময় save/update করো
+    isPremium: false, // existing থাকলে preserve করো নিচে
+    joinDate: new Date()
+  };
+
+  const existingUser = await usersCollection.findOne(query);
+
+  if (existingUser) {
+    // Existing user → photoURL + name update করো
+    await usersCollection.updateOne(
+      query,
+      { 
+        $set: {
+          name: userDataToSave.name,
+          photoURL: userDataToSave.photoURL,
+          // isPremium আর joinDate preserve রাখো
+        }
       }
+    );
+    return res.send({ message: 'User profile updated (including photo)' });
+  }
 
-      const newUser = {
-        ...user,
-        isPremium: false,
-        joinDate: new Date(),
-      };
-
-      const result = await usersCollection.insertOne(newUser);
-      res.send(result);
-    });
+  // New user
+  await usersCollection.insertOne({
+    ...userDataToSave,
+    isPremium: false,
+    joinDate: new Date()
+  });
+  res.send({ message: 'New user created with photo' });
+});
 
     // Get user premium 
     app.get('/users/status/:email', async (req, res) => {
@@ -148,13 +190,15 @@ app.patch('/lessons/:id/like', verifyFBToken, async (req, res) => {
     const lesson = await lessonsCollection.findOne({ _id: new ObjectId(id) });
     if (!lesson) return res.status(404).send({ message: 'Lesson not found' });
 
+    const currentLikes = Array.isArray(lesson.likes) ? lesson.likes : [];
+
     let updatedLikes;
-    if (lesson.likes?.includes(userEmail)) {
+    if (currentLikes.includes(userEmail)) {
       // Remove like
-      updatedLikes = lesson.likes.filter(email => email !== userEmail);
+      updatedLikes = currentLikes.filter(email => email !== userEmail);
     } else {
       // Add like
-      updatedLikes = [...(lesson.likes || []), userEmail];
+      updatedLikes = [...currentLikes, userEmail];
     }
 
     const result = await lessonsCollection.updateOne(
@@ -164,9 +208,145 @@ app.patch('/lessons/:id/like', verifyFBToken, async (req, res) => {
 
     res.send({ message: 'Like updated', likesCount: updatedLikes.length });
   } catch (err) {
+    console.error("Like error:", err);
     res.status(500).send({ message: 'Server error', error: err.message });
   }
 });
+
+// Toggle favorite for a lesson
+app.patch('/lessons/:id/favorite', verifyFBToken, async (req, res) => {
+  const { id } = req.params;
+  const userEmail = req.decoded_email;
+
+  try {
+    const lesson = await lessonsCollection.findOne({ _id: new ObjectId(id) });
+    if (!lesson) return res.status(404).send({ message: 'Lesson not found' });
+    
+    let updatedFavorites;
+    if (lesson.favorites?.includes(userEmail)) {
+      updatedFavorites = lesson.favorites.filter(email => email !== userEmail);
+    } else {
+      updatedFavorites = [...(lesson.favorites || []), userEmail];
+    }
+
+    const result = await lessonsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { favorites: updatedFavorites, favoritesCount: updatedFavorites.length } }
+    );
+
+    res.send({ message: 'Favorites updated', favoritesCount: updatedFavorites.length });
+  } catch (err) {
+    res.status(500).send({ message: 'Server error', error: err.message });
+  }
+});
+
+// Author Info API
+app.get('/authors/:email', async (req, res) => {
+  const { email } = req.params;
+
+  try {
+    // Author info from users collection
+    const author = await usersCollection.findOne({ email });
+
+    if (!author) return res.status(404).send({ message: "Author not found" });
+
+    // Total lessons created by this author
+    const totalLessons = await lessonsCollection.countDocuments({ createdBy: email });
+
+    res.send({
+      name: author.name,
+      photoURL: author.photoURL || null,
+      totalLessons,
+      email: author.email
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ message: "Server error" });
+  }
+});
+
+// Get all lessons by a specific author
+app.get('/lessons/by-author/:email', async (req, res) => {
+  const { email } = req.params;
+
+  try {
+    const lessons = await lessonsCollection
+      .find({ createdBy: email })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.send(lessons);
+  } catch (error) {
+    console.error("Error fetching lessons by author:", error);
+    res.status(500).send({ message: "Failed to fetch lessons" });
+  }
+});
+
+//report collection api
+app.post('/lessons/report', verifyFBToken, async (req, res) => {
+  const { lessonId, reason, reportedUserEmail } = req.body;
+
+  if (!lessonId || !reason || !reportedUserEmail) {
+    return res.status(400).send({ message: "All fields are required" });
+  }
+
+  try {
+    const report = {
+      lessonId: new ObjectId(lessonId),
+      reportedBy: req.decoded_email, 
+      reportedUserEmail,             
+      reason,
+      createdAt: new Date()
+    };
+
+    const result = await reportsCollection.insertOne(report);
+    res.send({ message: 'Report submitted successfully', insertedId: result.insertedId });
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ message: 'Failed to submit report' });
+  }
+});
+
+
+    // Add comment
+    app.post('/lessons/:id/comment', verifyFBToken, async (req, res) => {
+      const { text } = req.body;
+      const comment = {
+        userId: req.decoded_email,
+        userName: req.decoded_name,
+        text,
+        createdAt: new Date()
+      };
+
+      await lessonsCollection.updateOne(
+        { _id: new ObjectId(req.params.id) },
+        { $push: { comments: comment } }
+      );
+      res.send(comment);
+    });
+
+    //get comment
+ app.get('/lessons/:id/comments', async (req, res) => {
+  const lesson = await lessonsCollection.findOne({ _id: new ObjectId(req.params.id) });
+  res.send({ comments: lesson.comments || [] });
+});
+
+
+    // Get similar lessons
+    app.get('/lessons/similar/:id', async (req, res) => {
+      const lesson = await lessonsCollection.findOne({ _id: new ObjectId(req.params.id) });
+      if (!lesson) return res.status(404).send({ message: 'Lesson not found' });
+
+      const similar = await lessonsCollection
+        .find({
+          _id: { $ne: lesson._id },
+          $or: [{ category: lesson.category }, { tone: lesson.tone }]
+        })
+        .limit(6)
+        .toArray();
+
+      res.send(similar);
+    });
 
 
 //my lesson
