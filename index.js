@@ -63,26 +63,7 @@ async function run() {
     reportsCollection = db.collection('reports'); 
 
     console.log('MongoDB connected successfully');
-
-    // Create or get user
-    // app.post('/users', async (req, res) => {
-    //   const user = req.body;
-    //   const existingUser = await usersCollection.findOne({ email: user.email });
-
-    //   if (existingUser) {
-    //     return res.send({ message: 'User already exists', insertedId: existingUser._id });
-    //   }
-
-    //   const newUser = {
-    //     ...user,
-    //     isPremium: false,
-    //     joinDate: new Date(),
-    //   };
-
-    //   const result = await usersCollection.insertOne(newUser);
-    //   res.send(result);
-    // });
-
+//post user api
     app.post('/users', async (req, res) => {
   const user = req.body; 
 
@@ -173,6 +154,38 @@ app.get('/lessons/public', async (req, res) => {
   res.send(lessons);
 });
 
+//my lesson
+app.get('/lessons/my', verifyFBToken, async (req, res) => {
+  const email = req.decoded_email;
+
+  const lessons = await lessonsCollection
+    .find({ createdBy: email })
+    .sort({ createdAt: -1 })
+    .toArray();
+
+  res.send(lessons);
+});
+
+//get favorite api 
+app.get('/lessons/favorites', verifyFBToken, async (req, res) => {
+  const email = req.decoded_email;
+
+  try {
+    const lessons = await lessonsCollection.find({
+      $or: [
+    { favorites: email },
+    { favorites: { $in: [email] } }
+  ]
+    }).toArray();
+
+    res.send(lessons);
+  } catch (error) {
+    res.status(500).send({
+      message: 'Failed to fetch favorite lessons'
+    });
+  }
+});
+
 //single lessons
 app.get('/lessons/:id', verifyFBToken, async (req, res) => {
   const  id  = req.params.id;
@@ -212,6 +225,9 @@ app.patch('/lessons/:id/like', verifyFBToken, async (req, res) => {
     res.status(500).send({ message: 'Server error', error: err.message });
   }
 });
+
+
+
 
 // Toggle favorite for a lesson
 app.patch('/lessons/:id/favorite', verifyFBToken, async (req, res) => {
@@ -349,21 +365,6 @@ app.post('/lessons/report', verifyFBToken, async (req, res) => {
     });
 
 
-//my lesson
-app.get('/lessons/my', verifyFBToken, async (req, res) => {
-  const email = req.decoded_email;
-
-  const lessons = await lessonsCollection
-    .find({ createdBy: email })
-    .sort({ createdAt: -1 })
-    .toArray();
-
-  res.send(lessons);
-});
-
-
-
-
 
 
     // Create lesson
@@ -375,6 +376,42 @@ app.get('/lessons/my', verifyFBToken, async (req, res) => {
       const result = await lessonsCollection.insertOne(lesson);
       res.send(result);
     });
+
+  // Update lesson
+app.patch('/lessons/:id', verifyFBToken, async (req, res) => {
+  const { id } = req.params;
+  const email = req.decoded_email;
+  const updatedData = req.body;
+
+  try {
+    // Ensure only owner can update
+    const lesson = await lessonsCollection.findOne({ _id: new ObjectId(id) });
+
+    if (!lesson) {
+      return res.status(404).send({ message: 'Lesson not found' });
+    }
+
+    if (lesson.createdBy !== email) {
+      return res.status(403).send({ message: 'Forbidden access' });
+    }
+
+    const result = await lessonsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          ...updatedData,
+          updatedAt: new Date()
+        }
+      }
+    );
+
+    res.send({ message: 'Lesson updated successfully', modifiedCount: result.modifiedCount });
+  } catch (error) {
+    console.error('Update lesson error:', error);
+    res.status(500).send({ message: 'Failed to update lesson' });
+  }
+});
+
 
     // Delete lesson
     app.delete('/lessons/:id',verifyFBToken, async (req, res) => {
