@@ -482,6 +482,43 @@ app.get('/reports', verifyFBToken, verifyAdmin, async (req, res) => {
   }
 });
 
+// Delete user account - Admin only
+app.delete('/users/:id', verifyFBToken, verifyAdmin, async (req, res) => {
+  const id = req.params.id;
+
+  try {
+    
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({ message: "Invalid user ID" });
+    }
+
+    //don't delete my account delete 
+    const userToDelete = await usersCollection.findOne({ _id: new ObjectId(id) });
+    if (!userToDelete) {
+      return res.status(404).send({ message: "User not found" });
+    }
+
+    if (userToDelete.email === req.decoded_email) {
+      return res.status(403).send({ message: "You cannot delete your own account!" });
+    }
+
+    // User-all lesson delete
+    await lessonsCollection.deleteMany({ createdBy: userToDelete.email });
+
+    // User delete
+    const result = await usersCollection.deleteOne({ _id: new ObjectId(id) });
+
+    if (result.deletedCount === 1) {
+      res.send({ message: "User deleted successfully", deletedCount: 1 });
+    } else {
+      res.status(400).send({ message: "Failed to delete user" });
+    }
+  } catch (error) {
+    console.error("Delete user error:", error);
+    res.status(500).send({ message: "Server error" });
+  }
+});
+
     app.get('/', (req, res) => {
       res.send('Digital Life Lesson Server is running ');
     });
@@ -490,6 +527,45 @@ app.get('/reports', verifyFBToken, verifyAdmin, async (req, res) => {
     console.error('Database connection failed:', error);
   }
 }
+
+// Toggle Featured - Admin only 
+app.patch('/lessons/:id/featured', verifyFBToken, verifyAdmin, async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const lesson = await lessonsCollection.findOne({ _id: new ObjectId(id) });
+    if (!lesson) return res.status(404).send({ message: "Lesson not found" });
+
+    const newStatus = !lesson.isFeatured;
+
+    const result = await lessonsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { isFeatured: newStatus } }
+    );
+
+    res.send({
+      message: newStatus ? "Featured" : "Unfeatured",
+      isFeatured: newStatus,
+      modifiedCount: result.modifiedCount
+    });
+  } catch (error) {
+    res.status(500).send({ message: "Server error" });
+  }
+});
+
+// Clear all reports for a lesson - Admin only
+app.delete('/reports/lesson/:lessonId', verifyFBToken, verifyAdmin, async (req, res) => {
+  const { lessonId } = req.params;
+
+  try {
+    const result = await reportsCollection.deleteMany({
+      lessonId: new ObjectId(lessonId)
+    });
+    res.send({ message: "Reports cleared", deletedCount: result.deletedCount });
+  } catch (error) {
+    res.status(500).send({ message: "Server error" });
+  }
+});
 
 run().catch(console.dir);
 
