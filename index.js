@@ -50,9 +50,18 @@ try{
 catch(err){
 return res.status(401).send({message: 'unauthorized access'})
 }
-
-
 }
+
+// VERIFY ADMIN (ADMIN ONLY)
+const verifyAdmin = async (req, res, next) => {
+  const email = req.decoded_email;
+  const user = await usersCollection.findOne({ email });
+
+  if (user?.role !== "admin") {
+    return res.status(403).send({ message: "Forbidden: Admin only" });
+  }
+  next();
+};
 
 async function run() {
   try {
@@ -72,22 +81,23 @@ async function run() {
   const userDataToSave = {
     email: user.email,
     name: user.name || user.displayName || user.email.split('@')[0],
-    photoURL: user.photoURL || null,  // এটা সবসময় save/update করো
-    isPremium: false, // existing থাকলে preserve করো নিচে
+    photoURL: user.photoURL || null, 
+    role: "user", 
+    isPremium: false, 
     joinDate: new Date()
   };
 
   const existingUser = await usersCollection.findOne(query);
 
   if (existingUser) {
-    // Existing user → photoURL + name update করো
+    
     await usersCollection.updateOne(
       query,
       { 
         $set: {
           name: userDataToSave.name,
           photoURL: userDataToSave.photoURL,
-          // isPremium আর joinDate preserve রাখো
+          
         }
       }
     );
@@ -101,6 +111,28 @@ async function run() {
     joinDate: new Date()
   });
   res.send({ message: 'New user created with photo' });
+});
+
+// Check admin role
+app.get("/users/admin/:email", async (req, res) => {
+  const email = req.params.email;
+  const user = await usersCollection.findOne({ email });
+
+  res.send({
+    admin: user?.role === "admin"
+  });
+});
+
+// Make user admin
+app.patch("/users/make-admin/:email",verifyFBToken,verifyAdmin, async (req, res) => {
+  const email = req.params.email;
+
+  const result = await usersCollection.updateOne(
+    { email },
+    { $set: { role: "admin" } }
+  );
+
+  res.send(result);
 });
 
     // Get user premium 
@@ -148,7 +180,7 @@ async function run() {
     })
 
 
-
+//get lessons
 app.get('/lessons/public', async (req, res) => {
   const lessons = await lessonsCollection.find({}).toArray();
   res.send(lessons);
@@ -418,6 +450,37 @@ app.patch('/lessons/:id', verifyFBToken, async (req, res) => {
       const result = await lessonsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
       res.send(result);
     });
+
+    // Get all users - Admin only
+app.get('/users', verifyFBToken, verifyAdmin, async (req, res) => {
+  try {
+    const users = await usersCollection.find({}).toArray();
+    const sanitizedUsers = users.map(user => ({
+      ...user,
+      _id: user._id.toString()
+    }));
+    res.send(sanitizedUsers);
+  } catch (error) {
+    console.error("Error fetching users:", error);
+    res.status(500).send({ message: "Failed to fetch users" });
+  }
+});
+
+// Get all reports - Admin only
+app.get('/reports', verifyFBToken, verifyAdmin, async (req, res) => {
+  try {
+    const reports = await reportsCollection.find({}).toArray();
+    const sanitizedReports = reports.map(report => ({
+      ...report,
+      _id: report._id.toString(),
+      lessonId: report.lessonId.toString()
+    }));
+    res.send(sanitizedReports);
+  } catch (error) {
+    console.error("Error fetching reports:", error);
+    res.status(500).send({ message: "Failed to fetch reports" });
+  }
+});
 
     app.get('/', (req, res) => {
       res.send('Digital Life Lesson Server is running ');
