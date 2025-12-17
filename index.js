@@ -179,11 +179,75 @@ app.patch("/users/make-admin/:email",verifyFBToken,verifyAdmin, async (req, res)
       res.send(result)
     })
 
+// Public users info
+app.get('/users/public', async (req, res) => {
+  try {
+    const users = await usersCollection.find({}, { projection: { name: 1, email: 1, photoURL: 1 } }).toArray();
+    const publicUsers = users.map(u => ({
+      _id: u._id.toString(),
+      email: u.email,
+      name: u.name || u.email.split("@")[0],
+      photoURL: u.photoURL || null
+    }));
+    res.send(publicUsers);
+  } catch (error) {
+    console.error("Error fetching public users:", error);
+    res.status(500).send({ message: "Server error" });
+  }
+});
 
-//get lessons
+// Get public lessons with search, filter, sort
 app.get('/lessons/public', async (req, res) => {
-  const lessons = await lessonsCollection.find({}).toArray();
-  res.send(lessons);
+  try {
+    // Query building
+    let query = {};
+
+    // Search by title (case-insensitive)
+    if (req.query.search) {
+      query.title = { $regex: req.query.search, $options: 'i' };
+    }
+
+    // Filter by category
+    if (req.query.category && req.query.category !== 'all') {
+      query.category = { $regex: new RegExp("^" + req.query.category.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') + "$", "i") };
+    }
+
+    // Filter by tone
+    if (req.query.tone && req.query.tone !== 'all') {
+      query.tone = { $regex: new RegExp("^" + req.query.tone.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') + "$", "i") };
+
+    }
+
+    // Sort
+    let sort = { createdAt: -1 }; 
+    if (req.query.sort === "mostSaved") {
+      sort = { favoritesCount: -1, createdAt: -1 }; 
+    }
+
+    // Fetch lessons with filter and sort
+    const lessons = await lessonsCollection
+      .find(query)
+      .sort(sort)
+      .toArray();
+
+    // Enrich with creator name and photo
+    const enrichedLessons = await Promise.all(
+      lessons.map(async (lesson) => {
+        const creator = await usersCollection.findOne({ email: lesson.createdBy });
+        return {
+          ...lesson,
+          _id: lesson._id.toString(),
+          creatorName: creator?.name || creator?.email?.split("@")[0] || "Anonymous",
+          creatorPhoto: creator?.photoURL || "https://i.ibb.co.com/4pQJ7nL/default-avatar.jpg", 
+        };
+      })
+    );
+
+    res.send(enrichedLessons);
+  } catch (error) {
+    console.error("Error fetching public lessons:", error);
+    res.status(500).send({ message: "Server error" });
+  }
 });
 
 //my lesson
@@ -257,9 +321,6 @@ app.patch('/lessons/:id/like', verifyFBToken, async (req, res) => {
     res.status(500).send({ message: 'Server error', error: err.message });
   }
 });
-
-
-
 
 // Toggle favorite for a lesson
 app.patch('/lessons/:id/favorite', verifyFBToken, async (req, res) => {
@@ -359,9 +420,10 @@ app.post('/lessons/report', verifyFBToken, async (req, res) => {
     // Add comment
     app.post('/lessons/:id/comment', verifyFBToken, async (req, res) => {
       const { text } = req.body;
+      const userName = req.decoded_name || req.decoded_email?.split("@")[0];
       const comment = {
         userId: req.decoded_email,
-        userName: req.decoded_name,
+       userName: userName,
         text,
         createdAt: new Date()
       };
@@ -395,9 +457,6 @@ app.post('/lessons/report', verifyFBToken, async (req, res) => {
 
       res.send(similar);
     });
-
-
-
 
     // Create lesson
     app.post('/lessons',verifyFBToken, async (req, res) => {
